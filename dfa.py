@@ -49,35 +49,32 @@ class DFA():
             if state in self.final_states:
                 equivalence_sets[1].append(state)
             else: equivalence_sets[0].append(state)
-
+        iteration = 1
         # higher order equivalences
         while another_iteration:
-            tmp_sets = [[]]
-            current_set = tmp_sets[-1]
+            print(iteration, "equivalence")
+            print(equivalence_sets)
+            tmp_sets = []
             for e_set in equivalence_sets:
-                if current_set != [] and current_set == tmp_sets[-1]: tmp_sets.append([])
-                current_set = tmp_sets[-1]
                 for s1 in e_set:
                     already = False
                     for tmp_set in tmp_sets:
                         if s1 in tmp_set: already = True
                     if already: continue
-                    current_set.append(s1)
+                    tmp_sets.append([s1])
                     for s2 in e_set:
                         if s1 == s2: continue
-                        if s2 in tmp_sets[-1]: continue
                         e0 = False
                         e1 = False
                         for _set in equivalence_sets:
                             e0 = e0 or (s1.next(0) in _set and s2.next(0) in _set)
                             e1 = e1 or (s1.next(1) in _set and s2.next(1) in _set)
-                        if e0 and e1: current_set.append(s2)
-                        else: tmp_sets.append([s2])
-                print(tmp_sets, equivalence_sets)
+                        if e0 and e1: tmp_sets[-1].append(s2)
             if tmp_sets == equivalence_sets: another_iteration = False
             equivalence_sets = tmp_sets
-
-#        print(equivalence_sets)
+            iteration += 1
+                            
+        print(equivalence_sets)
         states = []
         final_states = []
         initial_state = None
@@ -141,11 +138,43 @@ def get_states2():
 
     return states
 
+def get_states3():
+    states = []
+    for x in range(65, 71):
+        states.append(Node(chr(x)))
+
+    states[0].set_transition(0, states[1])
+    states[0].set_transition(1, states[2])
+    states[1].set_transition(0, states[0])
+    states[1].set_transition(1, states[3])
+    states[2].set_transition(0, states[4])
+    states[2].set_transition(1, states[5])
+    states[3].set_transition(0, states[4])
+    states[3].set_transition(1, states[5])
+    states[4].set_transition(0, states[4])
+    states[4].set_transition(1, states[5])
+    states[5].set_transition(0, states[5])
+    states[5].set_transition(1, states[5])
+
+    return states
+
 
 if __name__ == "__main__":
     states = get_states1()
-
     dfa = DFA(initial_state=states[0], states=states, final_states=[states[2]])
+    dfa.transition_table()
+    min_dfa = dfa.minimize()
+    min_dfa.transition_table()
+
+
+    states = get_states2()
+    dfa = DFA(initial_state=states[0], states=states, final_states=[states[4]])
+    dfa.transition_table()
+    min_dfa = dfa.minimize()
+    min_dfa.transition_table()
+
+    states = get_states3()
+    dfa = DFA(initial_state=states[0], states=states, final_states=[states[2],states[3],states[4]])
     dfa.transition_table()
     min_dfa = dfa.minimize()
     min_dfa.transition_table()
