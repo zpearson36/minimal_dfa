@@ -98,7 +98,7 @@ class Discriminator(nn.Module):
         return self.layers(x)
 
 def train(vae, disc, replay):
-
+    pass
 
 if __name__ == "__main__":
     rb = ReplayBuffer(
