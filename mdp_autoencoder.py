@@ -50,8 +50,10 @@ class VAE(nn.Module):
                 nn.Sigmoid()
                 )
 
-        self.loss = nn.KLDivLoss()
+        self.KL = nn.KLDivLoss()
+        self.recon = nn.BCELoss()
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[10_000, 25_000])
 
     def encode(self, state):
         state = self.encoder(state)
@@ -92,13 +94,18 @@ class Discriminator(nn.Module):
                 nn.Sigmoid()
                 )
 
-        self.loss = nn.MSELoss()
-        self.optimizer = torch.optim.AdamW(self.parameters())
+        self.loss = nn.BCELoss()
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=.0001)
+        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[10_000, 25_000])
 
     def forward(self, x):
         return self.layers(x)
 
 def train(vae, disc, replay, max_eps, action_space):
+    vae_avg = 0
+    disc_avg = 0
+    vae_over_time = []
+    disc_over_time = []
     for episode in range(max_eps):
         choice = np.random.randint(0, high=len(replay))
         state, action, reward, next_state, term = replay[choice]
@@ -146,36 +153,74 @@ def train(vae, disc, replay, max_eps, action_space):
                     torch.Tensor([sim[4]])))
                 )
         disc.zero_grad()
-        lm = 1 # hyperparam to normalize loss
-        real_loss = disc.loss(torch.Tensor([real_guess]), torch.Tensor([1]))
-        fake_loss = disc.loss(torch.Tensor([fake_guess]), torch.Tensor([0]))
-        sim_loss   = disc.loss(torch.Tensor([sim_guess]), torch.Tensor([1]))
-        disc_loss = np.log(real_loss) + lm*(np.log(1-fake_loss) + np.log(1-sim_loss))
-        disc_loss.requires_grad=True
-        disc_loss.backward()
-        disc.optimizer.step()
+        lm = .5 # hyperparam to normalize loss
+        #print(real_guess,fake_guess,sim_guess)
+        try:
+            real_loss = disc.loss(torch.Tensor([real_guess]), torch.Tensor([1]))
+            fake_loss = disc.loss(torch.Tensor([fake_guess]), torch.Tensor([0]))
+            sim_loss   = disc.loss(torch.Tensor([sim_guess]), torch.Tensor([0]))
+            disc_loss = np.log(real_loss) + lm*(np.log(1-fake_loss) + np.log(1-sim_loss))
+            disc_loss.requires_grad=True
+            disc_loss.backward()
+            disc.optimizer.step()
 
-        # update VAE
-        vae.zero_grad()
-        vae_loss = vae.loss(
-                torch.cat((
-                    torch.Tensor(pred_next_state),
-                    torch.Tensor([pred_reward]),
-                    torch.Tensor([pred_term])))[0],
-                torch.cat((
-                    torch.Tensor(encoded_next_state),
-                    torch.Tensor([reward]),
-                    torch.Tensor([term])))[0]
-                )
-        vae_loss = vae_loss - disc_loss
-        vae_loss.backward()
-        vae.optimizer.step()
-        if episode % 100 == 0: print(episode, disc_loss, vae_loss)
+            # update VAE
+            vae.zero_grad()
+            vae_kl_pred = vae.KL(
+                    torch.cat((
+                        torch.Tensor(pred_next_state),
+                        torch.Tensor([pred_reward]),
+                        torch.Tensor([pred_term])))[0],
+                    torch.cat((
+                        torch.Tensor(encoded_next_state),
+                        torch.Tensor([reward]),
+                        torch.Tensor([term])))[0]
+                    )
+            prior_state = np.zeros((LATENT_STATE_SPACE_SIZE))
+            prior_state[np.random.randint(LATENT_STATE_SPACE_SIZE)]=1
+            prior_state = torch.rand(LATENT_STATE_SPACE_SIZE)#Tensor(prior_state)
+            vae_kl_encode = vae.KL(
+                        torch.Tensor(encoded_state),
+                        torch.Tensor(prior_state),
+                    )
+            vae_recon = vae.recon(
+                    torch.cat((
+                        torch.Tensor(pred_next_state),
+                        torch.Tensor([pred_reward]),
+                        torch.Tensor([pred_term])))[0],
+                    torch.cat((
+                        torch.Tensor(encoded_next_state),
+                        torch.Tensor([reward]),
+                        torch.Tensor([term])))[0]
+                    )
+            vae_loss = vae_recon + vae_kl_pred + vae_kl_encode - disc_loss
+            vae_loss.backward()
+            vae.optimizer.step()
+            disc_avg = disc_avg + (disc_loss - disc_avg) / (episode + 1)
+            vae_avg = vae_avg + (vae_loss - vae_avg) / (episode + 1)
+            vae_over_time.append(vae_avg.detach())
+            disc_over_time.append(disc_avg.detach())
+            vae.scheduler.step()
+            disc.scheduler.step()
+            if episode % 1000 == 0: print(episode, disc_avg, vae_avg)
+        except RuntimeError as e:
+            print("NAN error")
+            episode -= 1
+            break
+        except KeyboardInterrupt as e:
+            episode -= 1
+            break
+    lspace = np.linspace(1,episode+1, episode+1)
+    plt.plot(lspace, vae_over_time)
+    plt.savefig("vae.png")
+    plt.clf()
+    plt.plot(lspace, disc_over_time)
+    plt.savefig("disc.png")
 
 def fill_initial_replay(env):
     rb = []
     state, _ = env.reset()
-    while len(rb) < 10000:
+    while len(rb) < 1000000:
         action = np.random.choice([0,1])
         n_state, reward, term, trunc, _ = env.step(action)
         rb.append([state.tolist(), action, reward, n_state.tolist(), term])
@@ -187,12 +232,14 @@ def fill_initial_replay(env):
 
 if __name__ == "__main__":
     # populate replay_buffer
+    torch.manual_seed(42)
+    np.random.seed(42)
     env = gym.make("CartPole-v1")
     rb = fill_initial_replay(env)
 
     # train latent space generator
     vae = VAE()
     disc = Discriminator()
-    train(vae, disc, rb, 10000, [0,1])
+    train(vae, disc, rb, 1000000, [0,1])
 
     # train policy

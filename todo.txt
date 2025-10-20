@@ -1,0 +1,15 @@
+writeup, similarities between dfa and mdp homomorphism
+ 
+other ways of grouping nodes in graphs
+
+TorchRL PPO & encoder
+
+Speak with other Profs
+
+state->PPO->policy
+ 
+state->encode()->PPO->policy
+ 
+ns,r,term = env.step()
+ 
+encode(ns) -> PPO
