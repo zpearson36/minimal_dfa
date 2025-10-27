@@ -1,0 +1,5 @@
+Notes 10/22/205
+
+- needed to normalize unencoded state.
+- - position and angle I dived values by their max values
+- - linear and angular velocity I Used e(x) / (1 + e(x))
